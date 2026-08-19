@@ -120,6 +120,104 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ status, reason }),
     }),
+
+  listAdminVerifications: ({ request_type, status } = {}) => {
+    const params = new URLSearchParams();
+    if (request_type) params.set("request_type", request_type);
+    if (status) params.set("status", status);
+    const qs = params.toString();
+    return request(`/core/admin/verifications${qs ? `?${qs}` : ""}`);
+  },
+  getAdminVerificationDetail: (id) => request(`/core/admin/verifications/${id}`),
+  approveKyc: (id, note = "") =>
+    request(`/core/admin/verifications/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    }),
+  rejectKyc: (id, reason) =>
+    request(`/core/admin/verifications/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  requestMoreKycDocuments: (id, payload) =>
+    request(`/core/admin/verifications/${id}/request-documents`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  requestKycFieldUpdates: (id, { field_paths, reason, comment }) =>
+    request(`/core/admin/verifications/${id}/request-field-updates`, {
+      method: "POST",
+      body: JSON.stringify({
+        field_paths,
+        reason,
+        comment,
+      }),
+    }),
+  suspendKyc: (id, reason) =>
+    request(`/core/admin/verifications/${id}/suspend`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  openVerificationDocument: async (requestId, documentId) => {
+    const token = getStoredAccessToken();
+    const response = await fetch(
+      `${API_BASE}/core/verification/requests/${requestId}/documents/${documentId}/view`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(parseErrorDetail(data, "Could not open document"));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
+
+  listAdminAssistanceQueue: (status) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request(`/core/admin/applications/queue${qs}`);
+  },
+  getAdminAssistanceDetail: (id) => request(`/core/admin/applications/${id}`),
+  reviewAdminAssistance: (id, payload) =>
+    request(`/core/admin/applications/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  disburseAdminAssistance: (id, { disbursement_reference, note }) =>
+    request(`/core/admin/applications/${id}/disburse`, {
+      method: "POST",
+      body: JSON.stringify({ disbursement_reference, note }),
+    }),
+
+  openAssistanceDocument: async (applicationId, documentId) => {
+    const token = getStoredAccessToken();
+    const response = await fetch(
+      `${API_BASE}/core/applications/${applicationId}/documents/${documentId}/view`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(parseErrorDetail(data, "Could not open document"));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
+
+  listAdminItemQueue: (status) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request(`/core/admin/item-donations/queue${qs}`);
+  },
+  getAdminItemDetail: (id) => request(`/core/admin/item-donations/${id}`),
+  reviewAdminItem: (id, payload) =>
+    request(`/core/admin/item-donations/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   getVerificationDocuments: () => request("/core/verification/documents"),
   getRejectionReasons: () => request("/core/verification/rejection-reasons"),
 
@@ -196,35 +294,43 @@ export const adminApi = {
       body: JSON.stringify({ user_id, title, message }),
     }),
 
-  approveAccount: async (userId, verificationRequestId) => {
-    if (verificationRequestId) {
-      await adminApi.reviewVerificationRequest(verificationRequestId, "VERIFIED");
-    }
+  activateAccount: async (userId) => {
     await adminApi.updateUserStatus(userId, "ACTIVE");
     try {
       await adminApi.sendNotification(
         userId,
-        "Account approved",
-        "Your Give Away account has been approved. You can now sign in."
+        "Account activated",
+        "Your Give Away account is active. You can sign in to the user application."
       );
     } catch {
       /* notification is best-effort */
     }
   },
 
-  rejectAccount: async (userId, verificationRequestId, reason = "") => {
-    if (verificationRequestId) {
-      await adminApi.reviewVerificationRequest(verificationRequestId, "REJECTED", reason);
-    }
+  suspendAccount: async (userId, reason = "") => {
     await adminApi.updateUserStatus(userId, "SUSPENDED");
     try {
       await adminApi.sendNotification(
         userId,
-        "Account not approved",
-        reason || "Your Give Away registration was not approved. Contact support for details."
+        "Account suspended",
+        reason || "Your account has been suspended. Contact support for assistance."
       );
     } catch {
       /* notification is best-effort */
+    }
+  },
+
+  /** @deprecated Use approveKyc — KYC approval must not change account status */
+  approveAccount: async (userId, verificationRequestId) => {
+    if (verificationRequestId) {
+      await adminApi.approveKyc(verificationRequestId);
+    }
+  },
+
+  /** @deprecated Use rejectKyc + suspendAccount separately when needed */
+  rejectAccount: async (userId, verificationRequestId, reason = "") => {
+    if (verificationRequestId) {
+      await adminApi.rejectKyc(verificationRequestId, reason || "Verification rejected");
     }
   },
 };
