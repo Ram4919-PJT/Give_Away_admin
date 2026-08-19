@@ -4,9 +4,9 @@ import {
   ShieldAlert,
   Building2,
   Landmark,
-  PackageCheck,
   ArrowUpRight,
   RefreshCw,
+  ClipboardList,
 } from "lucide-react";
 import { adminApi } from "../api/adminClient";
 
@@ -20,12 +20,13 @@ function typeStyles(type) {
   return "bg-sky-500/15 text-sky-300";
 }
 
-export default function AdminDashboardPage({ setActiveTab }) {
+export default function AdminDashboardPage({ onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     usersCount: 0,
     ngosCount: 0,
     pendingVerifications: 0,
+    pendingAssistance: 0,
     pendingUsers: 0,
     totalMoneyDonated: 0,
     totalPoolBalance: 0,
@@ -33,23 +34,28 @@ export default function AdminDashboardPage({ setActiveTab }) {
     applicationsCount: 0,
   });
   const [recentRequests, setRecentRequests] = useState([]);
+  const [recentAssistance, setRecentAssistance] = useState([]);
   const [fundPools, setFundPools] = useState([]);
 
   const loadDashboard = async () => {
     setLoading(true);
     try {
-      const [users, ngos, verifications, moneyDons, pools, inventory, apps] = await Promise.all([
+      const [users, ngos, verifications, moneyDons, pools, inventory, apps, assistanceQueue] = await Promise.all([
         adminApi.getUsers().catch(() => []),
         adminApi.getNgoProfiles().catch(() => []),
-        adminApi.getVerificationRequests().catch(() => []),
+        adminApi.listAdminVerifications().catch(() => []),
         adminApi.getMoneyDonations().catch(() => []),
         adminApi.getFundPools().catch(() => []),
         adminApi.getInventory().catch(() => []),
         adminApi.getApplications().catch(() => []),
+        adminApi.listAdminAssistanceQueue().catch(() => []),
       ]);
 
       const pending = verifications.filter(
-        (v) => v.status === "UNDER_REVIEW" || v.status === "SUBMITTED"
+        (v) => ["UNDER_REVIEW", "DOCUMENTS_SUBMITTED", "MORE_DOCUMENTS_REQUIRED"].includes(v.status)
+      );
+      const pendingAssistance = assistanceQueue.filter((a) =>
+        ["SUBMITTED", "UNDER_REVIEW", "PENDING_REVIEW", "OPEN", "ACTION_REQUIRED"].includes(a.status),
       );
       const pendingUsers = users.filter((u) => u.status === "PENDING");
       const verifiedNgos = ngos.filter((n) => n.verification_status === "VERIFIED");
@@ -59,12 +65,14 @@ export default function AdminDashboardPage({ setActiveTab }) {
         ngosCount: verifiedNgos.length,
         pendingUsers: pendingUsers.length,
         pendingVerifications: pending.length,
+        pendingAssistance: pendingAssistance.length,
         totalMoneyDonated: moneyDons.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0),
         totalPoolBalance: pools.reduce((acc, curr) => acc + (Number(curr.balance) || 0), 0),
         inventoryStockCount: inventory.reduce((acc, curr) => acc + (Number(curr.quantity) || 0), 0),
         applicationsCount: apps.length,
       });
       setRecentRequests(pending.slice(0, 6));
+      setRecentAssistance(pendingAssistance.slice(0, 5));
       setFundPools(pools.slice(0, 5));
     } catch (err) {
       console.error("Failed loading dashboard data:", err);
@@ -79,12 +87,21 @@ export default function AdminDashboardPage({ setActiveTab }) {
 
   const cards = [
     {
-      label: "Pending approvals",
+      label: "Pending KYC reviews",
       value: stats.pendingVerifications,
-      hint: `${stats.pendingUsers} accounts waiting`,
+      hint: "Receiver, NGO, and donor identity",
       icon: ShieldAlert,
       tone: "text-amber-300 bg-amber-500/15",
-      action: () => setActiveTab("verification"),
+      action: () => onNavigate?.("verification-receiver"),
+      actionLabel: "Review KYC",
+    },
+    {
+      label: "Pending money requests",
+      value: stats.pendingAssistance,
+      hint: `${stats.applicationsCount} total assistance records`,
+      icon: ClipboardList,
+      tone: "text-orange-300 bg-orange-500/15",
+      action: () => onNavigate?.("assistance-pending"),
       actionLabel: "Review",
     },
     {
@@ -93,7 +110,7 @@ export default function AdminDashboardPage({ setActiveTab }) {
       hint: `${formatMoney(stats.totalMoneyDonated)} donated`,
       icon: Landmark,
       tone: "text-emerald-300 bg-emerald-500/15",
-      action: () => setActiveTab("funds"),
+      action: () => onNavigate?.("funds"),
       actionLabel: "Funds",
     },
     {
@@ -102,17 +119,8 @@ export default function AdminDashboardPage({ setActiveTab }) {
       hint: `${stats.usersCount} total users`,
       icon: Building2,
       tone: "text-sky-300 bg-sky-500/15",
-      action: () => setActiveTab("ngos"),
+      action: () => onNavigate?.("ngos"),
       actionLabel: "NGOs",
-    },
-    {
-      label: "Inventory",
-      value: `${stats.inventoryStockCount}`,
-      hint: `${stats.applicationsCount} assistance requests`,
-      icon: PackageCheck,
-      tone: "text-indigo-300 bg-indigo-500/15",
-      action: () => setActiveTab("inventory"),
-      actionLabel: "Stock",
     },
   ];
 
@@ -170,7 +178,7 @@ export default function AdminDashboardPage({ setActiveTab }) {
               <p className="text-sm text-slate-400 mt-0.5">Latest donor, receiver, and NGO applications.</p>
             </div>
             <button
-              onClick={() => setActiveTab("verification")}
+              onClick={() => onNavigate?.("verification-receiver")}
               className="text-sm font-medium text-sky-400 hover:text-sky-300"
             >
               View all
@@ -204,7 +212,7 @@ export default function AdminDashboardPage({ setActiveTab }) {
                       {req.status.replace("_", " ")}
                     </span>
                     <button
-                      onClick={() => setActiveTab("verification")}
+                      onClick={() => onNavigate?.("verification-receiver", { requestId: req.request_id })}
                       className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium rounded-lg"
                     >
                       Review
@@ -218,9 +226,52 @@ export default function AdminDashboardPage({ setActiveTab }) {
 
         <div className="admin-card p-5">
           <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-base font-semibold text-white">Money requests</h3>
+              <p className="text-sm text-slate-400 mt-0.5">Awaiting admin review.</p>
+            </div>
+            <button
+              onClick={() => onNavigate?.("assistance-pending")}
+              className="text-sm font-medium text-sky-400 hover:text-sky-300"
+            >
+              View all
+            </button>
+          </div>
+
+          <div className="space-y-2.5">
+            {recentAssistance.length === 0 ? (
+              <p className="text-sm text-slate-500 py-8 text-center">No pending money requests.</p>
+            ) : (
+              recentAssistance.map((app) => (
+                <div
+                  key={app.application_id}
+                  className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white truncate">
+                      {app.receiver_name || `Receiver #${app.receiver_id}`}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      #{app.application_id} · {formatMoney(app.amount_requested)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => onNavigate?.("assistance", { applicationId: app.application_id })}
+                    className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium rounded-lg shrink-0"
+                  >
+                    Review
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="admin-card p-5">
+          <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-semibold text-white">Fund pools</h3>
             <button
-              onClick={() => setActiveTab("funds")}
+              onClick={() => onNavigate?.("funds")}
               className="text-sm font-medium text-sky-400 hover:text-sky-300"
             >
               Manage
